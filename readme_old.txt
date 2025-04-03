@@ -1,7 +1,6 @@
-# Proiect-SO
-This repository holds the project for the OS laboratory
+READ ME:
 
-## Working files description:
+     Working files description:
      
      	     * <hunt_id> - directory named <hunt_id> containing other files, e.g. treasure files, logs, other. Id's are unique between directories, and attempting to appoint the same id to a new directory returns an error. Each hunt directory can contain multiple treasure files
 	     
@@ -30,6 +29,6 @@ This repository holds the project for the OS laboratory
 
 	     * logged_hunt.log - text file that keeps track of every operation executed on a <treasure_file> from this hunt. Each operation adds a new line at the end of the file, detailing the executed operation, and the target file.
 
-## Working files structure:
+     Working files structure:
 
-## Usage:
+     Usage:
