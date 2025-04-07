@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <time.h>
 
 #define MAX_PATH_LEN 128 // path for hunt dir + files ! file names included in length !
 #define MAX_LOG_LEN 128 // maximum length of log entry
@@ -52,7 +53,7 @@ struct option_t {
 // ---> renames here <--- // ...maybe
 
 // structure with (treasure id, starting byte) pair
-// sitauated at the start of the treasures file for optimisation purposes
+// situated at the start of the treasures file for optimisation purposes
 /*
 struct header_t {
   //char trj_id[MAX_TRJID_LEN];
@@ -102,7 +103,7 @@ void add_treasure(char* hunt_id) {
   strcat(trj_path, "/");
   strcat(trj_path, TRJFILE_NAME); // whole path for treasure file
   
-  // if directory doesn't exist, create it and initilaise it with respective files
+  // if directory doesn't exist, create it and initialise it with respective files
   if(stat(dir_path, &sb) && !S_ISDIR(sb.st_mode)) {
     printf("The hunt \'%s\' is not currently happening. Making it happen...\t", hunt_id);
     mkdir(dir_path, 0777); // make a dir with all permisions (?)
@@ -267,6 +268,184 @@ void add_treasure(char* hunt_id) {
   close(log_fd);
 }
 
+void list_treasures(char* hunt_id) {
+  struct stat sb = { 0 }; // stat buffer
+  char dir_path[MAX_PATH_LEN] = "./"; // local path prefix
+  char log_path[MAX_PATH_LEN];
+  char trj_path[MAX_PATH_LEN];
+
+  int trj_fd, log_fd;
+  char wr_log[MAX_LOG_LEN];
+  wr_log[0] = '\0';
+
+  strcat(dir_path, hunt_id); // whole path for directory (relative)
+
+  strcpy(log_path, dir_path);
+  strcat(log_path, "/");
+  strcat(log_path, LOGFILE_NAME); // whole path for log file
+
+  strcpy(trj_path, dir_path);
+  strcat(trj_path, "/");
+  strcat(trj_path, TRJFILE_NAME); // whole path for treasure file
+  
+  // if directory doesn't exist, let the user know
+  if(stat(dir_path, &sb) && !S_ISDIR(sb.st_mode)) {
+    printf("The hunt \'%s\' has not been started yet. Take the initiative, make your dreams come true!\n", hunt_id);
+    return;
+  }
+
+  // if directory exists, display data about it
+  printf("-- -- -- -- --\n");
+  printf("Name: %s\n", hunt_id);
+  printf("Total size: %ld\n", sb.st_size);
+  printf("Last modification time: %s", ctime(&sb.st_mtime));
+  printf("-- -- -- -- --\n");
+
+  // then display the ids of the treasures inside
+  if((trj_fd = open(trj_path, O_RDONLY)) == -1) {
+    printf("Error retrieving treasures.\n");
+    exit(9);
+  }
+  
+  // if the directory exists, print minimal details about the treasures
+  struct trj_data_t curr_trj = { 0 };
+  int entries_read = 0;
+
+  while(read(trj_fd, &curr_trj, sizeof(struct trj_data_t))) {
+    printf("Treasure id: %3d\n", curr_trj.id);
+    printf("Treasure owner: %s\n\n", curr_trj.usr_id);
+    entries_read++;
+  }
+
+  // if no treasures exist, let the user know
+  if(entries_read == 0) {
+    printf("Oh wow, such empty.\n");
+  }
+
+  close(trj_fd);
+
+  printf("Found %d treasures in this hunt.\n", entries_read);
+  printf("-- -- -- -- --\n");
+
+  // log the results in the log file
+  if((log_fd = open(log_path, O_APPEND | O_WRONLY)) == -1) {
+    printf("Error retrieving logs.\n");
+    exit(10);
+  }
+
+  printf("Updating logs...\t");
+  sprintf(wr_log, "Listed data about hunt \'%s\' and %d items\n", hunt_id, entries_read);
+  
+  if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
+    printf("Error updating logs.\n");
+    exit(11);
+  }
+  printf("Done.\n");
+
+  close(log_fd);
+}
+
+void view_treasure(char* hunt_id, char* trj_id) {
+  struct stat sb = { 0 }; // stat buffer
+  char dir_path[MAX_PATH_LEN] = "./"; // local path prefix
+  char log_path[MAX_PATH_LEN];
+  char trj_path[MAX_PATH_LEN];
+
+  int log_fd, trj_fd;
+  char wr_log[MAX_LOG_LEN];
+  wr_log[0] = '\0';
+
+  strcat(dir_path, hunt_id); // whole path for directory (relative)
+
+  strcpy(log_path, dir_path);
+  strcat(log_path, "/");
+  strcat(log_path, LOGFILE_NAME); // whole path for log file
+
+  strcpy(trj_path, dir_path);
+  strcat(trj_path, "/");
+  strcat(trj_path, TRJFILE_NAME); // whole path for treasure file
+  
+  // if directory doesn't exist, notify user
+  if(stat(dir_path, &sb) && !S_ISDIR(sb.st_mode)) {
+    printf("The hunt you're looking for seems to be missing. Try lost and found?\n");
+    return;
+  }
+
+  // convert the treasure id from char[] to uint8_t
+  char* other_chrs = NULL;
+  long trj_idl = strtol(trj_id, &other_chrs, 10);
+
+  // check if treasure id is the right format
+  // is integer in range 0 - 255 inclusive, only contains numbers
+  // check is required since it is read as a char buffer
+  //printf("%s\n", other_chrs); // -- debug
+  if(strlen(other_chrs)) {
+    printf("Treasure id is not a number. \n");
+    return;
+  }
+
+  if(trj_idl < 0 || trj_idl > 255) {
+    printf("Treasure id is out of range. (0 - 255)\n");
+    return;
+  }
+
+  uint8_t trj_id8 = (uint8_t)trj_idl;
+
+  //printf("%d\n", trj_id8); // --debug
+
+  // integrity of id checked, now parse the file and look for the requested treasure
+  if((trj_fd = open(trj_path, O_RDONLY)) == -1) {
+    printf("Error retrieving treasures.\n");
+    exit(12);
+  }
+
+  struct trj_data_t curr_trj = { 0 };
+  int found = 0;
+  while(read(trj_fd, &curr_trj, sizeof(struct trj_data_t))) {
+    if(curr_trj.id == trj_id8) {
+      printf("Treasure id: %d\n", curr_trj.id);
+      printf("Treasure owner: %s\n", curr_trj.usr_id);
+      printf("Latitude / longitutde: %f, %f\n", curr_trj.lati, curr_trj.longi);
+      printf("Description: %s\n", curr_trj.desc);
+      printf("Value: %d\n", curr_trj.val);
+      
+      found++;
+      break;
+    }
+  }
+  
+  close(trj_fd);
+
+  // if treasure is not indexed, let the user know
+  if(!found) {
+    printf("Looks like someone was one step ahead. No such treasures here.\n");
+  }
+
+  printf("\nLogging details...\t");
+  if((log_fd = open(log_path, O_APPEND | O_WRONLY)) == -1) {
+    printf("Error retrieving logs.\n");
+    exit(13);
+  }
+
+  sprintf(wr_log, "Tried to view details about treasure \'%d\' in hunt \'%s\'...\t",
+	  trj_id8,
+	  hunt_id);
+  if(found) {
+    strcat(wr_log, "Success\n");
+  }
+  else {
+    strcat(wr_log, "Not found\n");
+  }
+
+  if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
+    printf("Error updating logs.\n");
+    exit(14);
+  }
+  printf("Done.\n");
+
+  close(log_fd);
+}
+
 int main(int argc, char** argv) {
   // check if number of arguments is right
   if(argc == 1) {
@@ -341,6 +520,28 @@ int main(int argc, char** argv) {
     for(int i = 2; i < argc; i++) {
       add_treasure(argv[i]);
     }
+    
+    break;
+  case LIST:
+    if(argc < 3) {
+      printf("Option takes at least one argument <hunt_id>\n");
+      print_usage(argv[0]);
+      exit(0);
+    }
+
+    for(int i = 2; i < argc; i++) {
+      list_treasures(argv[i]);
+    }
+    
+    break;
+  case VIEW:
+    if(argc != 4) {
+      printf("Option takes one argument pair <hunt_id> <treasure_id>\n");
+      print_usage(argv[0]);
+      exit(0);
+    }
+
+    view_treasure(argv[2], argv[3]);
     
     break;
   default:
