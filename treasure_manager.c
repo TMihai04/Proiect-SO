@@ -39,8 +39,8 @@ enum opcode_t {
   ADD,
   LIST,
   VIEW,
+  RM_T,
   RM_H,
-  RM_T
 };
 
 // structure with (option literal, option code) pair
@@ -118,14 +118,33 @@ void add_treasure(char* hunt_id) {
     printf("Done.\n");
 
     // log the directory creation
-    wr_log[0] = '\0';
-    sprintf(wr_log, "Hunt \'%s\' was created", hunt_id);
-    write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char));
+    sprintf(wr_log, "Hunt \'%s\' was created.\n", hunt_id);
+    if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
+      printf("Error updateing logs.\n");
+      exit(27);
+    }
 
     // log the log file creation
-    wr_log[0] = '\0';
-    strcat(wr_log, "Log file created.\n");
-    write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char));
+    sprintf(wr_log, "Log file created.\n");
+    if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
+      printf("Error updating logs.\n");
+      exit(28);
+    }
+
+    // create the symbolic link to the log file
+    char symlink_name[MAX_PATH_LEN];
+    sprintf(symlink_name, "logged_hunt-<%s>", hunt_id);
+    if(symlink(log_path, symlink_name) == -1) {
+      printf("Error creating symbolic link to logs.\n");
+      exit(26);
+    }
+
+    // log the symlink file creation
+    sprintf(wr_log, "Symlink to log file created.\n");
+    if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
+      printf("Error updating logs.\n");
+      exit(29);
+    }
 
     printf("Creating space for treasures to be stored...\t");
     // create the treasures file and give r/w permissions
@@ -268,6 +287,7 @@ void add_treasure(char* hunt_id) {
   close(log_fd);
 }
 
+// function that lists the ids of all treasures found inside of a hunt
 void list_treasures(char* hunt_id) {
   struct stat sb = { 0 }; // stat buffer
   char dir_path[MAX_PATH_LEN] = "./"; // local path prefix
@@ -345,6 +365,7 @@ void list_treasures(char* hunt_id) {
   close(log_fd);
 }
 
+// function that displays the actual data of a treasure given by id
 void view_treasure(char* hunt_id, char* trj_id) {
   struct stat sb = { 0 }; // stat buffer
   char dir_path[MAX_PATH_LEN] = "./"; // local path prefix
@@ -405,7 +426,7 @@ void view_treasure(char* hunt_id, char* trj_id) {
     if(curr_trj.id == trj_id8) {
       printf("Treasure id: %d\n", curr_trj.id);
       printf("Treasure owner: %s\n", curr_trj.usr_id);
-      printf("Latitude / longitutde: %f, %f\n", curr_trj.lati, curr_trj.longi);
+      printf("Latitude / longitutde: (%f, %f)\n", curr_trj.lati, curr_trj.longi);
       printf("Description: %s\n", curr_trj.desc);
       printf("Value: %d\n", curr_trj.val);
       
@@ -444,6 +465,194 @@ void view_treasure(char* hunt_id, char* trj_id) {
   printf("Done.\n");
 
   close(log_fd);
+}
+
+// function that removes the data of a treasure given by id from the specified directory
+void remove_treasure(char* hunt_id, char* trj_id) {
+  struct stat sb = { 0 }; // stat buffer
+  char dir_path[MAX_PATH_LEN] = "./"; // local path prefix
+  char log_path[MAX_PATH_LEN];
+  char trj_path[MAX_PATH_LEN];
+
+  int log_fd, trj_fd;
+  char wr_log[MAX_LOG_LEN];
+  wr_log[0] = '\0';
+
+  strcat(dir_path, hunt_id); // whole path for directory (relative)
+
+  strcpy(log_path, dir_path);
+  strcat(log_path, "/");
+  strcat(log_path, LOGFILE_NAME); // whole path for log file
+
+  strcpy(trj_path, dir_path);
+  strcat(trj_path, "/");
+  strcat(trj_path, TRJFILE_NAME); // whole path for treasure file
+  
+  // if directory doesn't exist, notify user
+  if(stat(dir_path, &sb) && !S_ISDIR(sb.st_mode)) {
+    printf("The hunter hungers for game, though he will not find it here.\n");
+    return;
+  }
+
+  // convert the treasure id from char[] to uint8_t
+  char* other_chrs = NULL;
+  long trj_idl = strtol(trj_id, &other_chrs, 10);
+
+  // check if treasure id is the right format
+  // is integer in range 0 - 255 inclusive, only contains numbers
+  // check is required since it is read as a char buffer
+  //printf("%s\n", other_chrs); // -- debug
+  if(strlen(other_chrs)) {
+    printf("Treasure id is not a number. \n");
+    return;
+  }
+
+  if(trj_idl < 0 || trj_idl > 255) {
+    printf("Treasure id is out of range. (0 - 255)\n");
+    return;
+  }
+
+  uint8_t trj_id8 = (uint8_t)trj_idl;
+
+  // integrity of id checked, now parse the file and look for the requested treasure
+  if((trj_fd = open(trj_path, O_RDWR)) == -1) {
+    printf("Error retrieving treasures.\n");
+    exit(15);
+  }
+
+  struct trj_data_t curr_trj = { 0 };
+  int found = 0, cnt = 0;
+  while(read(trj_fd, &curr_trj, sizeof(struct trj_data_t))) {
+    cnt++;
+    
+    if(curr_trj.id == trj_id8) {
+      found++;
+      continue;
+    }
+
+    if(found) {
+      if(lseek(trj_fd, -2 * sizeof(struct trj_data_t), SEEK_CUR) == -1) {
+	printf("Error moving cursor. Treasure file might be corrupted!\n");
+	exit(16);
+      }
+
+      if(write(trj_fd, &curr_trj, sizeof(struct trj_data_t)) == -1) {
+	printf("Error deleting entry. Treasure file might be corrupted!\n");
+	exit(17);
+      }
+
+      if(lseek(trj_fd, sizeof(struct trj_data_t), SEEK_CUR) == -1) {
+	printf("Error moving cursor. Treasure file might be corrupted!\n");
+	exit(18);
+      }
+    }
+  }
+
+  if(found) {
+    struct trj_data_t empty = { 0 };
+    if(lseek(trj_fd, -sizeof(struct trj_data_t), SEEK_END) == -1) {
+	printf("Error moving cursor. Treasure file might be corrupted!\n");
+	exit(19);
+      }
+
+    if(write(trj_fd, &empty, sizeof(struct trj_data_t)) == -1) {
+      printf("Error deleting entry. Treasure file might be corrupted!\n");
+      exit(20);
+    }
+
+    if((ftruncate(trj_fd, (cnt - 1) * sizeof(struct trj_data_t))) == -1) {
+      printf("Error truncating file.\n");
+      exit(21);
+    }
+  }
+
+  close(trj_fd);
+
+  // if treasure is not indexed, let the user know
+  if(!found) {
+    printf("Sadly, you cannot delete something that doesn't already exist.\n");
+  }
+
+  // log the operation
+  printf("\nLogging details...\t");
+  if((log_fd = open(log_path, O_APPEND | O_WRONLY)) == -1) {
+    printf("Error retrieving logs.\n");
+    exit(22);
+  }
+
+  sprintf(wr_log, "Tried deleting treasure \'%d\' in hunt \'%s\'...\t",
+	  trj_id8,
+	  hunt_id);
+  if(found) {
+    strcat(wr_log, "Success\n");
+  }
+  else {
+    strcat(wr_log, "Not found\n");
+  }
+
+  if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
+    printf("Error updating logs.\n");
+    exit(23);
+  }
+  printf("Done.\n");
+
+  close(log_fd);
+}
+
+// function that removes a directory given by id
+void remove_hunt(char* hunt_id) {
+  struct stat sb = { 0 }; // stat buffer
+  char dir_path[MAX_PATH_LEN] = "./"; // local path prefix
+  char log_path[MAX_PATH_LEN];
+  char trj_path[MAX_PATH_LEN];
+  char sym_path[MAX_PATH_LEN];
+
+  if(hunt_id[strlen(hunt_id) - 1] == '/') {
+    hunt_id[strlen(hunt_id) - 1] = '\0';
+  }
+
+  strcpy(sym_path, dir_path);
+  strcpy(sym_path, "logged_hunt-<");
+  strcat(sym_path, hunt_id);
+  strcat(sym_path, ">"); // whole path for symlink
+
+  strcat(dir_path, hunt_id); // whole path for directory (relative)
+
+  strcpy(log_path, dir_path);
+  strcat(log_path, "/");
+  strcat(log_path, LOGFILE_NAME); // whole path for log file
+
+  strcpy(trj_path, dir_path);
+  strcat(trj_path, "/");
+  strcat(trj_path, TRJFILE_NAME); // whole path for treasure file
+  
+  // if directory doesn't exist, notify user
+  if(stat(dir_path, &sb) && !S_ISDIR(sb.st_mode)) {
+    printf("The hunter hungers for game, though he will not find it here.\n");
+    return;
+  }
+
+  // if directory exists, remove treasure, log, and symlink files
+  if(unlink(sym_path) == -1) {
+    printf("Error unlinking symbolic link.\n");
+    exit(30);
+  }
+  
+  if(unlink(trj_path) == -1) {
+    printf("Error unlinking treasure file.\n");
+    exit(24);
+  }
+
+  if(unlink(log_path) == -1) {
+    printf("Error unlinking log file.\n");
+    exit(25);
+  }
+
+  // then delete the directory itself
+  if(rmdir(dir_path) == -1) {
+    printf("Error removing directory.\n");
+    exit(25);
+  }
 }
 
 int main(int argc, char** argv) {
@@ -542,6 +751,29 @@ int main(int argc, char** argv) {
     }
 
     view_treasure(argv[2], argv[3]);
+    
+    break;
+  case RM_T:
+    if(argc != 4) {
+      printf("Option takes one argument pair <hunt_id> <treasure_id>\n");
+      print_usage(argv[0]);
+      exit(0);
+    }
+
+    remove_treasure(argv[2], argv[3]);
+    
+    break;
+    // TO DO: BREAKS ON LAST COMMAND. CANNOT FIND IT ???
+  case RM_H:
+    if(argc < 3) {
+      printf("Option takes at least one argument <hunt_id>\n");
+      print_usage(argv[0]);
+      exit(0);
+    }
+
+    for(int i = 2; i < argc; i++) {
+      remove_hunt(argv[i]);
+    }
     
     break;
   default:
