@@ -218,15 +218,70 @@ void add_treasure(char* hunt_id) {
 
   // latitude
   printf("X marks the spot? (2 floats)\n");
-  printf("latitude: ");
-  fscanf(stdin, "%f", &new_entry.lati);
+
+  int is_lat_ok = 0;
+  float lati_res = -1;
+  
+  do {
+    printf("latitude: ");
+    is_lat_ok = 1;
+    
+    if(fgets(line, MAX_BUFFER_READ, stdin) == NULL) {
+      printf("Error reading float.\n");
+      exit(31);
+    }
+
+    if(line[strlen(line) - 1] != '\n') {
+      while(fgetc(stdin) != '\n') {}
+    }
+  
+    line[strlen(line) - 1] = '\0';
+
+    char* chrs = NULL;
+    lati_res = strtof(line, &chrs);
+
+    if(strlen(chrs)) {
+      printf("Given input is not a valid float number. Try again.\n");
+      is_lat_ok = 0;
+    }
+    
+  } while(!is_lat_ok);
+
+  new_entry.lati = lati_res;
 
   // longitude
-  printf("longitude: ");
-  fscanf(stdin, "%f", &new_entry.longi);
+  int is_long_ok = 0;
+  float longi_res = -1;
+  
+  do {
+    printf("longitude: ");
+    is_long_ok = 1;
+    
+    if(fgets(line, MAX_BUFFER_READ, stdin) == NULL) {
+      printf("Error reading float.\n");
+      exit(32);
+    }
+
+    if(line[strlen(line) - 1] != '\n') {
+      while(fgetc(stdin) != '\n') {}
+    }
+  
+    line[strlen(line) - 1] = '\0';
+
+    char* chrs = NULL;
+    longi_res = strtof(line, &chrs);
+
+    if(strlen(chrs)) {
+      printf("Given input is not a valid float number. Try again.\n");
+      is_long_ok = 0;
+    }
+    
+  } while(!is_long_ok);
+
+  new_entry.longi = longi_res;
 
   // flush newline from last input
-  fgetc(stdin);
+  //fgetc(stdin);
 
   // description
   printf("I fancy a good story... (max %d characters)\n", MAX_TRJDESC_LEN);
@@ -247,12 +302,43 @@ void add_treasure(char* hunt_id) {
 
   // value
   printf("Here for the booty! (integer)\n");
-  printf("value: ");
-  fscanf(stdin, "%d", &new_entry.val);
+
+  int is_val_ok = 0;
+  long val = -1;
+  do {
+    printf("value: ");
+    is_val_ok = 1;
+
+    if(fgets(line, MAX_BUFFER_READ, stdin) == NULL) {
+      printf("Error reading value.\n");
+      exit(34);
+    }
+
+    if(line[strlen(line) - 1] != '\n') {
+      while(fgetc(stdin) != '\n') {}
+    }
+  
+    line[strlen(line) - 1] = '\0';
+
+    char* chrs = NULL;
+    val = strtol(line, &chrs, 10);
+
+    if(strlen(chrs)) {
+      printf("Given input is not a valid value. Try again.\n");
+      is_val_ok = 0;
+    }
+    else if(val < 0 || val > 255) {
+      printf("Given input is not in range. Try again.\n");
+      is_val_ok = 0;
+    }
+    
+  } while(!is_val_ok);
+
+  new_entry.val = (uint8_t)val;
 
   // flush newline from last input
   // helps if multiple treasures are added at the same time
-  fgetc(stdin);
+  //fgetc(stdin);
 
   //printf("%d\n%s\n%f\n%f\n%s\n%d\n", new_entry.id, new_entry.usr_id, new_entry.lati, new_entry.longi, new_entry.desc, new_entry.val); // -- debug
 
@@ -763,7 +849,6 @@ int main(int argc, char** argv) {
     remove_treasure(argv[2], argv[3]);
     
     break;
-    // TO DO: BREAKS ON LAST COMMAND. CANNOT FIND IT ???
   case RM_H:
     if(argc < 3) {
       printf("Option takes at least one argument <hunt_id>\n");
