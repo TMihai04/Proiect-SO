@@ -41,6 +41,7 @@ enum opcode_t {
   VIEW,
   RM_T,
   RM_H,
+  HELP,
 };
 
 // structure with (option literal, option code) pair
@@ -78,8 +79,29 @@ struct trj_data_t {
 // function that prints the usage of the program
 // TO DO: add the actual --help text
 void print_usage(char* cmd) {
-  printf("Usage: %s [OPTION]... [ARGS]...\n", cmd);
-  printf("Lorem ipusm...\n");
+  printf("Usage: %s [OPTION] [ARGS]...\n", cmd);
+  printf("Manage treasure files and data in designated hunt direcotries.\n");
+  printf("Some options accept multiple arguments and call the same option with all given arguments iteratively.\n");
+  printf("\n");
+  printf("Options:\n");
+  printf("\t--add                  create directory if it doesn't exist, then add\n");
+  printf("\t                       new treasure with user given data. This also\n");
+  printf("\t                       creates a symbolic link to the log file inside\n");
+  printf("\t--list                 display a short list of treasures from the target\n");
+  printf("\t                       hunt directory\n");
+  printf("\t--view                 show detailed information about a specific entry\n");
+  printf("\t--remove_treasure      removes the target entry from the specified hunt\n");
+  printf("\t--remove_hunt          removes the target hunt along with its symbolic\n");
+  printf("\t                       link\n");
+  printf("\t--help           display this help and exit\n");
+  printf("\n");
+  printf("Exit status:\n");
+  printf(" 0  if OK,\n");
+  printf(" 1  treasure addition failed,\n");
+  printf(" 2  directory listing error,\n");
+  printf(" 3  treasure data querry error,\n");
+  printf(" 4  failed removal of entry,\n");
+  printf(" 5  hunt or symbolic link removal error.\n");
 }
 
 // function that adds a treasure to a certain hunt who's id is given as parameter
@@ -121,14 +143,14 @@ void add_treasure(char* hunt_id) {
     sprintf(wr_log, "Hunt \'%s\' was created.\n", hunt_id);
     if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
       printf("Error updateing logs.\n");
-      exit(27);
+      exit(1);
     }
 
     // log the log file creation
     sprintf(wr_log, "Log file created.\n");
     if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
       printf("Error updating logs.\n");
-      exit(28);
+      exit(1);
     }
 
     // create the symbolic link to the log file
@@ -136,21 +158,21 @@ void add_treasure(char* hunt_id) {
     sprintf(symlink_name, "logged_hunt-<%s>", hunt_id);
     if(symlink(log_path, symlink_name) == -1) {
       printf("Error creating symbolic link to logs.\n");
-      exit(26);
+      exit(1);
     }
 
     // log the symlink file creation
     sprintf(wr_log, "Symlink to log file created.\n");
     if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
       printf("Error updating logs.\n");
-      exit(29);
+      exit(1);
     }
 
     printf("Creating space for treasures to be stored...\t");
     // create the treasures file and give r/w permissions
     if((trj_fd = open(trj_path, O_EXCL | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH)) == -1) {
       printf("Error creating treasure file.\n");
-      exit(2);
+      exit(1);
     }
     
     close(trj_fd);
@@ -170,7 +192,7 @@ void add_treasure(char* hunt_id) {
   // open treasures file for reading and writing
   if((trj_fd = open(trj_path, O_RDWR)) == -1) {
     printf("Error retrieving treasures file.\n");
-    exit(3);
+    exit(1);
   }
 
   // read through the file and find the first unsuded id in range
@@ -202,7 +224,7 @@ void add_treasure(char* hunt_id) {
 
   if(fgets(line, MAX_USRID_LEN, stdin) == NULL) {
     printf("Error reading user-id.\n");
-    exit(4);
+    exit(1);
   }
 
   // flush stdin buffer if input is longer
@@ -228,7 +250,7 @@ void add_treasure(char* hunt_id) {
     
     if(fgets(line, MAX_BUFFER_READ, stdin) == NULL) {
       printf("Error reading float.\n");
-      exit(31);
+      exit(1);
     }
 
     if(line[strlen(line) - 1] != '\n') {
@@ -259,7 +281,7 @@ void add_treasure(char* hunt_id) {
     
     if(fgets(line, MAX_BUFFER_READ, stdin) == NULL) {
       printf("Error reading float.\n");
-      exit(32);
+      exit(1);
     }
 
     if(line[strlen(line) - 1] != '\n') {
@@ -289,7 +311,7 @@ void add_treasure(char* hunt_id) {
 
   if(fgets(line, MAX_TRJDESC_LEN, stdin) == NULL) {
     printf("Error reading description.\n");
-    exit(5);
+    exit(1);
   }
 
   // flush stdin buffer if input is longer
@@ -311,7 +333,7 @@ void add_treasure(char* hunt_id) {
 
     if(fgets(line, MAX_BUFFER_READ, stdin) == NULL) {
       printf("Error reading value.\n");
-      exit(34);
+      exit(1);
     }
 
     if(line[strlen(line) - 1] != '\n') {
@@ -345,7 +367,7 @@ void add_treasure(char* hunt_id) {
   printf("Marking treasure down...\t");
   if(write(trj_fd, &new_entry, sizeof(new_entry)) == -1) {
     printf("Error writing treasure.\n");
-    exit(6);
+    exit(1);
   }
   printf("Done.\n");
 
@@ -357,7 +379,7 @@ void add_treasure(char* hunt_id) {
   printf("Logging new changes...\t");
   if((log_fd = open(log_path, O_APPEND | O_WRONLY)) == -1) {
     printf("Error retrieving logs.\n");
-    exit(7);
+    exit(1);
   }
 
   wr_log[0] = '\0';
@@ -366,7 +388,7 @@ void add_treasure(char* hunt_id) {
 	  new_entry.id);
   if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
     printf("Error updating logs.\n");
-    exit(8);
+    exit(1);
   }
   printf("Done.\n");
     
@@ -410,7 +432,7 @@ void list_treasures(char* hunt_id) {
   // then display the ids of the treasures inside
   if((trj_fd = open(trj_path, O_RDONLY)) == -1) {
     printf("Error retrieving treasures.\n");
-    exit(9);
+    exit(2);
   }
   
   // if the directory exists, print minimal details about the treasures
@@ -436,7 +458,7 @@ void list_treasures(char* hunt_id) {
   // log the results in the log file
   if((log_fd = open(log_path, O_APPEND | O_WRONLY)) == -1) {
     printf("Error retrieving logs.\n");
-    exit(10);
+    exit(2);
   }
 
   printf("Updating logs...\t");
@@ -444,7 +466,7 @@ void list_treasures(char* hunt_id) {
   
   if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
     printf("Error updating logs.\n");
-    exit(11);
+    exit(2);
   }
   printf("Done.\n");
 
@@ -503,7 +525,7 @@ void view_treasure(char* hunt_id, char* trj_id) {
   // integrity of id checked, now parse the file and look for the requested treasure
   if((trj_fd = open(trj_path, O_RDONLY)) == -1) {
     printf("Error retrieving treasures.\n");
-    exit(12);
+    exit(3);
   }
 
   struct trj_data_t curr_trj = { 0 };
@@ -531,7 +553,7 @@ void view_treasure(char* hunt_id, char* trj_id) {
   printf("\nLogging details...\t");
   if((log_fd = open(log_path, O_APPEND | O_WRONLY)) == -1) {
     printf("Error retrieving logs.\n");
-    exit(13);
+    exit(3);
   }
 
   sprintf(wr_log, "Tried to view details about treasure \'%d\' in hunt \'%s\'...\t",
@@ -546,7 +568,7 @@ void view_treasure(char* hunt_id, char* trj_id) {
 
   if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
     printf("Error updating logs.\n");
-    exit(14);
+    exit(3);
   }
   printf("Done.\n");
 
@@ -603,7 +625,7 @@ void remove_treasure(char* hunt_id, char* trj_id) {
   // integrity of id checked, now parse the file and look for the requested treasure
   if((trj_fd = open(trj_path, O_RDWR)) == -1) {
     printf("Error retrieving treasures.\n");
-    exit(15);
+    exit(4);
   }
 
   struct trj_data_t curr_trj = { 0 };
@@ -619,17 +641,17 @@ void remove_treasure(char* hunt_id, char* trj_id) {
     if(found) {
       if(lseek(trj_fd, -2 * sizeof(struct trj_data_t), SEEK_CUR) == -1) {
 	printf("Error moving cursor. Treasure file might be corrupted!\n");
-	exit(16);
+	exit(4);
       }
 
       if(write(trj_fd, &curr_trj, sizeof(struct trj_data_t)) == -1) {
 	printf("Error deleting entry. Treasure file might be corrupted!\n");
-	exit(17);
+	exit(4);
       }
 
       if(lseek(trj_fd, sizeof(struct trj_data_t), SEEK_CUR) == -1) {
 	printf("Error moving cursor. Treasure file might be corrupted!\n");
-	exit(18);
+	exit(4);
       }
     }
   }
@@ -638,17 +660,17 @@ void remove_treasure(char* hunt_id, char* trj_id) {
     struct trj_data_t empty = { 0 };
     if(lseek(trj_fd, -sizeof(struct trj_data_t), SEEK_END) == -1) {
 	printf("Error moving cursor. Treasure file might be corrupted!\n");
-	exit(19);
+	exit(4);
       }
 
     if(write(trj_fd, &empty, sizeof(struct trj_data_t)) == -1) {
       printf("Error deleting entry. Treasure file might be corrupted!\n");
-      exit(20);
+      exit(4);
     }
 
     if((ftruncate(trj_fd, (cnt - 1) * sizeof(struct trj_data_t))) == -1) {
       printf("Error truncating file.\n");
-      exit(21);
+      exit(4);
     }
   }
 
@@ -663,7 +685,7 @@ void remove_treasure(char* hunt_id, char* trj_id) {
   printf("\nLogging details...\t");
   if((log_fd = open(log_path, O_APPEND | O_WRONLY)) == -1) {
     printf("Error retrieving logs.\n");
-    exit(22);
+    exit(4);
   }
 
   sprintf(wr_log, "Tried deleting treasure \'%d\' in hunt \'%s\'...\t",
@@ -678,7 +700,7 @@ void remove_treasure(char* hunt_id, char* trj_id) {
 
   if(write(log_fd, wr_log, (strlen(wr_log) + 1) * sizeof(char)) == -1) {
     printf("Error updating logs.\n");
-    exit(23);
+    exit(4);
   }
   printf("Done.\n");
 
@@ -721,23 +743,23 @@ void remove_hunt(char* hunt_id) {
   // if directory exists, remove treasure, log, and symlink files
   if(unlink(sym_path) == -1) {
     printf("Error unlinking symbolic link.\n");
-    exit(30);
+    exit(5);
   }
   
   if(unlink(trj_path) == -1) {
     printf("Error unlinking treasure file.\n");
-    exit(24);
+    exit(5);
   }
 
   if(unlink(log_path) == -1) {
     printf("Error unlinking log file.\n");
-    exit(25);
+    exit(5);
   }
 
   // then delete the directory itself
   if(rmdir(dir_path) == -1) {
     printf("Error removing directory.\n");
-    exit(25);
+    exit(5);
   }
 }
 
@@ -768,7 +790,8 @@ int main(int argc, char** argv) {
     {"list", LIST},
     {"view", VIEW},
     {"remove_treasure", RM_T},
-    {"remove_hunt", RM_H}
+    {"remove_hunt", RM_H},
+    {"help", HELP}
   };
   const static int OPTION_CNT = sizeof(OPTIONS)/sizeof(struct option_t);
   //printf("%d\n", option_cnt); // --debug
@@ -860,6 +883,9 @@ int main(int argc, char** argv) {
       remove_hunt(argv[i]);
     }
     
+    break;
+  case HELP:
+    print_usage(argv[0]);
     break;
   default:
     printf("Somehow you managed to get past the option check and landed outside the defined range of options. I am truly impressed\n");
