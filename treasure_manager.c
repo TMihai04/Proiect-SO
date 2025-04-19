@@ -3,6 +3,9 @@
 
   -- PHASE 1 --
   added most of the functionality such as creating hunts, adding treasures, listing files and file contents and removing treasures and hunts
+
+  -- PHASE 2 --
+  added a way to list hunts and polished the rest
   
   Project done by Mihai Toderasc - 2025
  */
@@ -42,7 +45,7 @@
 // codes for options
 enum opcode_t {
   UNKWN = -1,
-  ADD,
+  ADD = 0,
   LIST,
   VIEW,
   RM_T,
@@ -84,7 +87,6 @@ struct trj_data_t {
 };
 
 // function that prints the usage of the program
-// TO DO: add the actual --help text
 void print_usage(char* cmd) {
   printf("Usage: %s [OPTION] [ARGS]...\n", cmd);
   printf("Manage treasure files and data in designated hunt direcotries.\n");
@@ -96,11 +98,13 @@ void print_usage(char* cmd) {
   printf("\t                       creates a symbolic link to the log file inside\n");
   printf("\t--list                 display a short list of treasures from the target\n");
   printf("\t                       hunt directory\n");
+  printf("\t--listh                display a short list of hunts from the directory\n");
+  printf("\t                       where the program was called, along with a few\n");
+  printf("\t                       details\n");
   printf("\t--view                 show detailed information about a specific entry\n");
   printf("\t--remove_treasure      removes the target entry from the specified hunt\n");
   printf("\t--remove_hunt          removes the target hunt along with its symbolic\n");
   printf("\t                       link\n");
-  // TO DO: add printf for --listh
   printf("\t--help           display this help and exit\n");
   printf("\n");
   printf("Exit status:\n");
@@ -109,7 +113,8 @@ void print_usage(char* cmd) {
   printf(" 2  directory listing error,\n");
   printf(" 3  treasure data querry error,\n");
   printf(" 4  failed removal of entry,\n");
-  printf(" 5  hunt or symbolic link removal error.\n");
+  printf(" 5  hunt or symbolic link removal error,\n");
+  printf(" 6  directory parsing error.\n");
 }
 
 // function that adds a treasure to a certain hunt who's id is given as parameter
@@ -777,6 +782,7 @@ void list_hunts() {
   // open current directory
   DIR* this_dir = NULL;
   struct dirent* curr_entry = NULL;
+  int hunt_cnt = 0;
 
   if((this_dir = opendir(".")) == NULL) {
     perror("Error accessing current directory.\n");
@@ -807,7 +813,7 @@ void list_hunts() {
     }
     
     // check hunt integrity
-    int has_log = 0, has_trj = 0, files_cnt = 0;
+    int has_log = 0, has_trj = 0;
     struct dirent* ent = NULL;
     int trj_cnt = 0;
       
@@ -816,9 +822,7 @@ void list_hunts() {
       if(!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) {
 	continue;
       }
-      
-      files_cnt++;
-	
+      	
       if(ent->d_type == DT_REG) {
 	if(!strcmp(ent->d_name, LOGFILE_NAME)) {
 	  has_log++;
@@ -841,6 +845,7 @@ void list_hunts() {
 
     // display the data
     if(has_trj || has_log) {
+      hunt_cnt++;
       printf("Read hunt \'%s\' ", curr_entry->d_name);
 
       if(!has_log){
@@ -855,6 +860,11 @@ void list_hunts() {
     }
 
     closedir(curr_hunt);
+  }
+  
+  // if no hunts are present, notify the user
+  if(!hunt_cnt) {
+    printf("Wow, such empty...\n");
   }
 
   closedir(this_dir);
@@ -896,9 +906,9 @@ int main(int argc, char** argv) {
   
   enum opcode_t curr_option_code = UNKWN;
 
-  for(int i = ADD; i < OPTION_CNT; i++) {
+  for(int i = 0; i < OPTION_CNT; i++) {
     if(!strcmp(curr_option, OPTIONS[i].op)) {
-      curr_option_code = i;
+      curr_option_code = OPTIONS[i].code;
       break;
     }
   }
