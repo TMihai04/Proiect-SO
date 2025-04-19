@@ -1,6 +1,9 @@
 /*
   Main application file for the Treasure hunt Project. More information in the README.md file
 
+  -- PHASE 1 --
+  added most of the functionality such as creating hunts, adding treasures, listing files and file contents and removing treasures and hunts
+  
   Project done by Mihai Toderasc - 2025
  */
 
@@ -12,6 +15,9 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <time.h>
+#include <sys/types.h>
+#include <dirent.h> // added in phase 2
+#include <errno.h>
 
 #define MAX_PATH_LEN 128 // path for hunt dir + files ! file names included in length !
 #define MAX_LOG_LEN 128 // maximum length of log entry
@@ -42,6 +48,7 @@ enum opcode_t {
   RM_T,
   RM_H,
   HELP,
+  LIST_H, // added in phase 2
 };
 
 // structure with (option literal, option code) pair
@@ -93,6 +100,7 @@ void print_usage(char* cmd) {
   printf("\t--remove_treasure      removes the target entry from the specified hunt\n");
   printf("\t--remove_hunt          removes the target hunt along with its symbolic\n");
   printf("\t                       link\n");
+  // TO DO: add printf for --listh
   printf("\t--help           display this help and exit\n");
   printf("\n");
   printf("Exit status:\n");
@@ -763,6 +771,95 @@ void remove_hunt(char* hunt_id) {
   }
 }
 
+// -- PHASE 2 --
+// function that lists the hunts in the current directory and the amount of treasures found in each, or displays details if folder is incomplete
+void list_hunts() {
+  // open current directory
+  DIR* this_dir = NULL;
+  struct dirent* curr_entry = NULL;
+
+  if((this_dir = opendir(".")) == NULL) {
+    perror("Error accessing current directory.\n");
+    exit(6);
+  }
+
+  while((curr_entry = readdir(this_dir))) {
+    // check if the read entry is a directory
+    if(curr_entry->d_type != DT_DIR) {
+      continue;
+    }
+
+    // skip over current (.) and preceding directories (..)
+    if(!strcmp(curr_entry->d_name, ".") || !strcmp(curr_entry->d_name, "..")) {
+      continue;
+    }
+
+    // open the entry and look for the two specific hunt files
+    // logged_hunt.log <-- LOGFILE_NAME
+    // treasures.dat   <-- TRJFILE_NAME
+    //printf("Read dir \'%s\'\n", curr_entry->d_name); // -- debug
+    DIR* curr_hunt = opendir(curr_entry->d_name);
+    
+    // if opening the entry fails, inform the user
+    if(!curr_hunt) {
+      perror(curr_entry->d_name);
+      continue;
+    }
+    
+    // check hunt integrity
+    int has_log = 0, has_trj = 0, files_cnt = 0;
+    struct dirent* ent = NULL;
+    int trj_cnt = 0;
+      
+    while((ent = readdir(curr_hunt))) {
+      // skip over current (.) and preceding directories (..)
+      if(!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) {
+	continue;
+      }
+      
+      files_cnt++;
+	
+      if(ent->d_type == DT_REG) {
+	if(!strcmp(ent->d_name, LOGFILE_NAME)) {
+	  has_log++;
+	}
+	else if(!strcmp(ent->d_name, TRJFILE_NAME)) {
+	  has_trj++;
+	  // get the count of treasures in the file
+	  struct stat trj_st = { 0 };
+	  char trj_pth[MAX_PATH_LEN];
+
+	  strcpy(trj_pth, curr_entry->d_name);
+	  strcat(trj_pth, "/");
+	  strcat(trj_pth, TRJFILE_NAME);
+	  
+	  stat(trj_pth, &trj_st);
+	  trj_cnt = trj_st.st_size / sizeof(struct trj_data_t);
+	}
+      }
+    }
+
+    // display the data
+    if(has_trj || has_log) {
+      printf("Read hunt \'%s\' ", curr_entry->d_name);
+
+      if(!has_log){
+	printf("(Logs missing) - %d treasure(s)\n", trj_cnt);
+      }
+      else if(!has_trj) {
+	printf("(treasures missing)\n");
+      }
+      else {
+	printf("- %d treasure(s)\n", trj_cnt);
+      }
+    }
+
+    closedir(curr_hunt);
+  }
+
+  closedir(this_dir);
+}
+
 int main(int argc, char** argv) {
   // check if number of arguments is right
   if(argc == 1) {
@@ -779,8 +876,8 @@ int main(int argc, char** argv) {
     //printf("%s\n", curr_option); // --debug
   }
   else {
-    printf("Unknown option.\n");
-    print_usage(argv[0]);
+    printf("Unknown option. Use --help for details\n");
+    //print_usage(argv[0]);
     exit(0);
   }
 
@@ -791,7 +888,8 @@ int main(int argc, char** argv) {
     {"view", VIEW},
     {"remove_treasure", RM_T},
     {"remove_hunt", RM_H},
-    {"help", HELP}
+    {"help", HELP},
+    {"listh", LIST_H} // added in phase 2
   };
   const static int OPTION_CNT = sizeof(OPTIONS)/sizeof(struct option_t);
   //printf("%d\n", option_cnt); // --debug
@@ -806,8 +904,8 @@ int main(int argc, char** argv) {
   }
 
   if(curr_option_code == UNKWN) {
-    printf("Unknown option.\n");
-    print_usage(argv[0]);
+    printf("Unknown option. Use --help for details\n");
+    //print_usage(argv[0]);
     exit(0);
   }
 
@@ -831,7 +929,7 @@ int main(int argc, char** argv) {
     */
     if(argc < 3) {
       printf("Option takes at least one argument <hunt_id>\n");
-      print_usage(argv[0]);
+      //print_usage(argv[0]);
       exit(0);
     }
 
@@ -843,7 +941,7 @@ int main(int argc, char** argv) {
   case LIST:
     if(argc < 3) {
       printf("Option takes at least one argument <hunt_id>\n");
-      print_usage(argv[0]);
+      //print_usage(argv[0]);
       exit(0);
     }
 
@@ -855,7 +953,7 @@ int main(int argc, char** argv) {
   case VIEW:
     if(argc != 4) {
       printf("Option takes one argument pair <hunt_id> <treasure_id>\n");
-      print_usage(argv[0]);
+      //print_usage(argv[0]);
       exit(0);
     }
 
@@ -865,7 +963,7 @@ int main(int argc, char** argv) {
   case RM_T:
     if(argc != 4) {
       printf("Option takes one argument pair <hunt_id> <treasure_id>\n");
-      print_usage(argv[0]);
+      //print_usage(argv[0]);
       exit(0);
     }
 
@@ -875,13 +973,22 @@ int main(int argc, char** argv) {
   case RM_H:
     if(argc < 3) {
       printf("Option takes at least one argument <hunt_id>\n");
-      print_usage(argv[0]);
+      //print_usage(argv[0]);
       exit(0);
     }
 
     for(int i = 2; i < argc; i++) {
       remove_hunt(argv[i]);
     }
+    
+    break;
+  case LIST_H: // added in phase 2 for convenience
+    if(argc > 3) {
+      printf("Too many parameters for given option\n");
+      exit(0);
+    }
+
+    list_hunts();
     
     break;
   case HELP:
