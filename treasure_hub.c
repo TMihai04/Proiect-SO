@@ -16,12 +16,20 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <stddef.h>
 
 #define _SRCFILE_NAME "treasure_manager.c"
+#define _BINFILE_NAME "treasure_manager"
 #define _COMFILE_NAME "commands.cms"
 #define _ALLFILE_PATH "."
 
 #define MAX_CMD_LEN 32
+#define MAX_PTH_LEN 64
+#define MAX_LIN_LEN 64
+
+#define _LIST_H "--listh"
+#define _LIST_T "--list"
+#define _VIEW   "--view"
 
 // codes for menu commands
 enum cmdcode_t {
@@ -100,7 +108,26 @@ void list_treasures() {
 
 // function that signals the monitor to list hunts
 void list_hunts() {
-  printf("hunt list\n");
+  //printf("hunt list\n"); // -- debug
+  // write data about the command to be run to the comms file
+  // i use fopen() because it's more convenient when working with char[]
+  char comfile_path[MAX_PTH_LEN];
+  snprintf(comfile_path, MAX_PTH_LEN, "%s/%s", _ALLFILE_PATH, _COMFILE_NAME);
+
+  // open file and truncate it to 0 size, write option, and close file
+  FILE* comm_file = fopen(comfile_path, "w");
+  fprintf(comm_file, "%s\n", _LIST_H);
+
+  fclose(comm_file);
+
+  // notify child process it can read from file
+  if(kill(monitor_pid, SIGUSR1) < 0) {
+    perror("Failed to notify child to read");
+    exit(errno);
+  }
+
+  // wait for response from child
+  pause();
 }
 
 // function that signals the monitor to view a certain treasure
@@ -194,8 +221,33 @@ void hchld_fin(int signum) {
 }
 
 // handler in the child for answering to a prompt from a command
+// this is the main logic loop in the child, verification done asynchronously
 void hchld_ans(int signum) {
+  // open file and read from it
+  char comfile_path[MAX_PTH_LEN];
+  snprintf(comfile_path, MAX_PTH_LEN, "%s/%s", _ALLFILE_PATH, _COMFILE_NAME);
   
+  FILE* comm_file = fopen(comfile_path, "r");
+  char aux[MAX_LIN_LEN + 1];
+
+  fgets(aux, MAX_LIN_LEN, comm_file);
+  // -- debug -- vv --
+  printf("%s", aux);
+
+  // notify parent we are done reading
+  if(kill(getppid(), SIGUSR1) < 0) {
+    perror("Failed to notify parent operation is done");
+    exit(errno);
+  }
+
+  // TO DO: add a switch statement that checks which option was given
+  //        (read args from the file, if its the case), then fork and
+  //        call exec() on that child to execute the required option
+}
+
+// handler for when child finished an operation
+void hchld_done(int signum) {
+  printf("\e[32m[LOG]\e[0mDone.\n");
 }
 
 int main(int argc, char** argv) {
@@ -225,14 +277,26 @@ int main(int argc, char** argv) {
 
   // check if the file used to communicate between processes exists
   // if not, create it
-  
 
   // check if the 'treasure_manager.c' file exists, and compile it
   // if not, let the user know program cannot run
   struct stat st = { 0 };
   if(stat(_SRCFILE_NAME, &st) < 0) {
-    perror("Necessary \'treasure_manager.c\' file non existent");
-    exit(perror);
+    perror("Necessary prerequisite file non existent");
+    exit(errno);
+  }
+
+  // compile the necessary program so we have the binary for it
+  // NOTE: i am taking the liberty to use system() here, since we dive deeper
+  //       into child processes later
+  int compile_cmd_size = strlen("gcc ") + strlen(_SRCFILE_NAME) + strlen(" -o ") + strlen(_BINFILE_NAME) + 1;
+  char compile_cmd[compile_cmd_size];
+
+  snprintf(compile_cmd, compile_cmd_size, "gcc %s -o %s", _SRCFILE_NAME, _BINFILE_NAME);
+  
+  if(system(compile_cmd) != 0) {
+    perror("Error compiling prerequisite file");
+    exit(errno);
   }
 
   // code for when no options were given
@@ -327,6 +391,7 @@ int main(int argc, char** argv) {
 	sigaction(SIGCHLD, sa, NULL);
 
 	free(sa);
+	
 	// define sigaction
 	sa = calloc(1, sizeof(struct sigaction));
 	if(sa == NULL) {
@@ -341,6 +406,19 @@ int main(int argc, char** argv) {
 	free(sa);
 	// wait for child to open
 	pause();
+
+	// define sigaction
+	sa = calloc(1, sizeof(struct sigaction));
+	if(sa == NULL) {
+	  perror("Error alocating sigaction");
+	  exit(-1);
+	}
+	// define handler for child finishing operation
+	sa->sa_handler = hchld_done;
+
+	sigaction(SIGUSR1, sa, NULL);
+
+	free(sa);
       }
 
       // in child, stop the menu loop
@@ -355,6 +433,12 @@ int main(int argc, char** argv) {
       list_treasures();
       break;
     case LIST_H:
+      // check if any monitor is open
+      if(monitor_pid < 0) {
+	printf("\e[35m[HUB]\e[0m No monitor is open at this time. Maybe open one?\n");
+	break;
+      }
+      
       list_hunts();
       break;
     case VIEW:
@@ -384,7 +468,10 @@ int main(int argc, char** argv) {
       free(sa);
 
       // stop child
-      kill(monitor_pid, SIGTERM);
+      if(kill(monitor_pid, SIGTERM) < 0) {
+	perror("Failed to signal termination to child");
+	exit(errno);
+      }
       //pause();
 
       while(monitor_pid > 0) {
@@ -402,7 +489,7 @@ int main(int argc, char** argv) {
       }
       
       // exit parent process
-      exit_program();
+      //exit_program();
       is_menu_running = 0;
       break;
     case HELP:
@@ -434,7 +521,7 @@ int main(int argc, char** argv) {
     sa_chld_usr1.sa_handler = hchld_ans;
     sigaction(SIGUSR1, &sa_chld_usr1, NULL);
 
-    /* TO DO: Since in the parent we ignore the SIGCHLD signals sent by the
+    /* NOTE : Since in the parent we ignore the SIGCHLD signals sent by the
               stopping or continuing of the child process, we are going to use
 	      the SIGUSR1 signal for communication for the commands both to and
 	      from the child process.
@@ -444,7 +531,7 @@ int main(int argc, char** argv) {
 
 	      After the commands were executed, we send SIGUSR1 to the parent
 	      in order to let it know that the execution finished, and have
-	      it resume its execution
+	      it resume its execution.
      */
     
     int is_child_running = 1;
