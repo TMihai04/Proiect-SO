@@ -13,9 +13,13 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/wait.h>
+#include <errno.h>
+#include <sys/stat.h>
 
-#define DEFAULT_BIN_NAME "treasure_manager"
-#define DEFAULT_BIN_PATH "."
+#define _SRCFILE_NAME "treasure_manager.c"
+#define _COMFILE_NAME "commands.cms"
+#define _ALLFILE_PATH "."
 
 #define MAX_CMD_LEN 32
 
@@ -144,14 +148,38 @@ void hchld_open(int signum) {
 }
 
 // handler for child error kill
+/* deprecated
 void hchld_err(int signum) {
   printf("\e[31m[ERR]\e[0m Error. Child process ended unexpectedly\n");
   monitor_pid = -1;
 }
+*/
 
-// handler for proper child kill
+// handler for child kill
 void hchld_kill(int signum) {
-  printf("\e[32m[LOG]\e[0m Success. Child killed\n");
+  // wait for child and grab status code
+  int wstatus;
+  if(waitpid(monitor_pid, &wstatus, 0) < 0) {
+    perror("Error waiting for child");
+    exit(errno);
+  }
+
+  // check if child finished with exit() or return in main()
+  if(WIFEXITED(wstatus)) {
+    // check if child finished with exit code 0 (success)
+    int westatus = WEXITSTATUS(wstatus);
+    
+    if(westatus == 0) {
+      printf("\e[32m[LOG]\e[0m Success. Child killed (Code %d)\n", westatus);
+    }
+    else {
+      printf("\e[31m[ERR]\e[0m Error. Child process ended unexpectedly with code %d\n", westatus);
+    }
+  }
+  else {
+    printf("\e[31m[ERR]\e[0m Error. Child process ended unexpectedly and badly\n");
+  }
+  
   monitor_pid = -1;
 }
 
@@ -163,6 +191,11 @@ void hchld_fin(int signum) {
   // resolve stuff in the child before kill
   printf("hchld_fin\n");
   exit(0);
+}
+
+// handler in the child for answering to a prompt from a command
+void hchld_ans(int signum) {
+  
 }
 
 int main(int argc, char** argv) {
@@ -188,6 +221,18 @@ int main(int argc, char** argv) {
     }
 
     return 0;
+  }
+
+  // check if the file used to communicate between processes exists
+  // if not, create it
+  
+
+  // check if the 'treasure_manager.c' file exists, and compile it
+  // if not, let the user know program cannot run
+  struct stat st = { 0 };
+  if(stat(_SRCFILE_NAME, &st) < 0) {
+    perror("Necessary \'treasure_manager.c\' file non existent");
+    exit(perror);
   }
 
   // code for when no options were given
@@ -268,9 +313,6 @@ int main(int argc, char** argv) {
       
       monitor_pid = get_child_process();
 
-      // TO DO: make the child process send a signal to the parent when it opened
-      //        successfully, then resume and let the user know
-
       if(monitor_pid > 0) {
 	// define sigaction
 	sa = calloc(1, sizeof(struct sigaction));
@@ -279,7 +321,7 @@ int main(int argc, char** argv) {
 	  exit(-1);
 	}
 	// define handler for child encountering error and terminating (ignores stop)
-	sa->sa_handler = hchld_err;
+	sa->sa_handler = hchld_kill;
 	sa->sa_flags = SA_NOCLDSTOP;
 	
 	sigaction(SIGCHLD, sa, NULL);
@@ -381,10 +423,29 @@ int main(int argc, char** argv) {
     }
 
     // declare handler for termination
-    struct sigaction sa_chld = { 0 };
+    struct sigaction sa_chld_term = { 0 };
     
-    sa_chld.sa_handler = hchld_fin;
-    sigaction(SIGTERM, &sa_chld, NULL);
+    sa_chld_term.sa_handler = hchld_fin;
+    sigaction(SIGTERM, &sa_chld_term, NULL);
+
+    // declare handler for option execution
+    struct sigaction sa_chld_usr1 = { 0 };
+
+    sa_chld_usr1.sa_handler = hchld_ans;
+    sigaction(SIGUSR1, &sa_chld_usr1, NULL);
+
+    /* TO DO: Since in the parent we ignore the SIGCHLD signals sent by the
+              stopping or continuing of the child process, we are going to use
+	      the SIGUSR1 signal for communication for the commands both to and
+	      from the child process.
+
+	      We send SIGUSR1 to the child process to notify it to read data
+	      and execute the necessary commands.
+
+	      After the commands were executed, we send SIGUSR1 to the parent
+	      in order to let it know that the execution finished, and have
+	      it resume its execution
+     */
     
     int is_child_running = 1;
 
