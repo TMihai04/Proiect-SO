@@ -95,7 +95,7 @@ pid_t get_child_process() {
 
   if(ret == -1) {
     perror("Failed to procreate");
-    exit(1);
+    exit(errno);
   }
 
   return ret;
@@ -222,19 +222,93 @@ void hchld_fin(int signum) {
 
 // handler in the child for answering to a prompt from a command
 // this is the main logic loop in the child, verification done asynchronously
-void hchld_ans(int signum) {
+void hchld_usr1(int signum) {
   // open file and read from it
   char comfile_path[MAX_PTH_LEN];
   snprintf(comfile_path, MAX_PTH_LEN, "%s/%s", _ALLFILE_PATH, _COMFILE_NAME);
   
   FILE* comm_file = fopen(comfile_path, "r");
-  char aux[MAX_LIN_LEN + 1];
+  char curr_arg[MAX_LIN_LEN + 1];
+  char* args[5]; // 0 name, 1 op, 2 hunt, 3 trj id, 4 (or 2, 3) NULL
 
-  fgets(aux, MAX_LIN_LEN, comm_file);
+  char binfile_path[MAX_PTH_LEN];
+  snprintf(binfile_path, MAX_PTH_LEN, "%s/%s", _ALLFILE_PATH, _BINFILE_NAME);
+
+  // set the first argument (i.e. the program name)
+  if((args[0] = malloc(sizeof(char) * MAX_PTH_LEN)) == NULL) {
+    perror("Error making space for arguments in child");
+    exit(errno);
+  }
+
+  strcpy(args[0], binfile_path);
+  //printf("%s\n", args[0]); // -- debug
+
+  // get rest of arguments
+  int actual_it = 0;
+  for(int it = 1; it <= 3; it++) {
+    actual_it = it;
+    curr_arg[0] = '\0';
+    // get argument from file
+    if(!fgets(curr_arg, MAX_LIN_LEN, comm_file)) {
+      break;
+    }
+    printf(":: %s\n", curr_arg); // -- debug
+    // format argument and flush rest of line
+    if(curr_arg[strlen(curr_arg) - 1] == '\n') {
+      curr_arg[strlen(curr_arg) - 1] = '\0';
+    }
+    else {
+      while(fgetc(comm_file) != '\n') {}
+    }
+
+    // alocate a space for a new argument
+    if((args[it] = malloc(sizeof(char) * (MAX_LIN_LEN + 1))) == NULL) {
+      perror("Error making space for arguments in child");
+      exit(errno);
+    }
+
+    strcpy(args[it], curr_arg);
+  }
+
+  // set NULL as last item
+  args[actual_it] = NULL;
+
   // -- debug -- vv --
-  printf("%s", aux);
+  for(int i = 0; i <= actual_it; i++) {
+    printf(": %s\n", args[i]);
+  }
+  // -- debug -- ^^ --  
 
-  // notify parent we are done reading
+  // start a new child process for the manager
+  pid_t manager_pid = get_child_process();
+
+  // in the manager child, execute the manager with the arguments
+  if(manager_pid == 0) {
+    execv(binfile_path, args);
+  }
+
+  // wait for child to exit
+  int wstatus = 0;
+  waitpid(manager_pid, &wstatus, 0);
+
+  // check if child finished with exit() or return in main()
+  if(WIFEXITED(wstatus)) {
+    // check if child finished with exit code 0 (success)
+    int westatus = WEXITSTATUS(wstatus);
+    
+    if(westatus == 0) {
+      printf("\e[34m[LOG]\e[0m Success. Child finished (Code %d)\n", westatus);
+    }
+    else {
+      printf("\e[31m[ERR]\e[0m Error. Child process ended unexpectedly with code %d\n", westatus);
+    }
+  }
+  else {
+    printf("\e[31m[ERR]\e[0m Error. Child process ended unexpectedly and badly\n");
+  }
+  
+
+  // notify parent we are done with this operation
   if(kill(getppid(), SIGUSR1) < 0) {
     perror("Failed to notify parent operation is done");
     exit(errno);
@@ -247,7 +321,7 @@ void hchld_ans(int signum) {
 
 // handler for when child finished an operation
 void hchld_done(int signum) {
-  printf("\e[32m[LOG]\e[0mDone.\n");
+  printf("\e[32m[LOG]\e[0m Done.\n");
 }
 
 int main(int argc, char** argv) {
@@ -518,7 +592,7 @@ int main(int argc, char** argv) {
     // declare handler for option execution
     struct sigaction sa_chld_usr1 = { 0 };
 
-    sa_chld_usr1.sa_handler = hchld_ans;
+    sa_chld_usr1.sa_handler = hchld_usr1;
     sigaction(SIGUSR1, &sa_chld_usr1, NULL);
 
     /* NOTE : Since in the parent we ignore the SIGCHLD signals sent by the
