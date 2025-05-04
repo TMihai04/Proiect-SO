@@ -56,7 +56,7 @@ pid_t monitor_pid = -1; // holds the pid for the child process
 void print_usage(char* cmd) {
   printf("Usage: %s\n", cmd);
   printf("Create separate processes and call on them to manage hunts and auxiliary data.\n");
-  printf("Requires the \'treasure_manager.c\' script to be compiled under the \'treasure_manager\' name. Both binaries must be located in the same directory\n");
+  printf("Requires the \'treasure_manager.c\' script to be located in the same directory as the calling script.\n");
   // NOTE: maybe add a way to specify the name and path of the binary.
   //       Check if the binary file exists in the specified (or default) path before
   //       launching a background process calling the script
@@ -102,8 +102,28 @@ pid_t get_child_process() {
 }
 
 // function that signals the monitor to list treasures
-void list_treasures() {
-  printf("treasure list\n");
+void list_treasures(char* arg1) {
+  //printf("treasure list\n"); // -- debug
+  // write data about the command to be run to the comms file
+  // i use fopen() because it's more convenient when working with char[]
+  char comfile_path[MAX_PTH_LEN];
+  snprintf(comfile_path, MAX_PTH_LEN, "%s/%s", _ALLFILE_PATH, _COMFILE_NAME);
+
+  // open file and truncate it to 0 size, write data, and close file
+  FILE* comm_file = fopen(comfile_path, "w");
+  fprintf(comm_file, "%s\n", _LIST_T);
+  fprintf(comm_file, "%s\n", arg1);
+
+  fclose(comm_file);
+
+  // notify child process it can read from file
+  if(kill(monitor_pid, SIGUSR1) < 0) {
+    perror("Failed to notify child to read");
+    exit(errno);
+  }
+
+  // wait for response from child
+  pause();
 }
 
 // function that signals the monitor to list hunts
@@ -131,8 +151,29 @@ void list_hunts() {
 }
 
 // function that signals the monitor to view a certain treasure
-void view_treasure() {
-  printf("viewed booty\n");
+void view_treasure(char* arg1, char* arg2) {
+  //printf("viewed booty\n");
+  // write data about the command to be run to the comms file
+  // i use fopen() because it's more convenient when working with char[]
+  char comfile_path[MAX_PTH_LEN];
+  snprintf(comfile_path, MAX_PTH_LEN, "%s/%s", _ALLFILE_PATH, _COMFILE_NAME);
+
+  // open file and truncate it to 0 size, write data, and close file
+  FILE* comm_file = fopen(comfile_path, "w");
+  fprintf(comm_file, "%s\n", _VIEW);
+  fprintf(comm_file, "%s\n", arg1);
+  fprintf(comm_file, "%s\n", arg2);
+
+  fclose(comm_file);
+
+  // notify child process it can read from file
+  if(kill(monitor_pid, SIGUSR1) < 0) {
+    perror("Failed to notify child to read");
+    exit(errno);
+  }
+
+  // wait for response from child
+  pause();
 }
 
 // function that signals the monitor to stop
@@ -149,7 +190,7 @@ void exit_program() {
 void print_usage_cmd() {
   printf("\e[32m[HLP]\e[0m This is a help prompt for the Treasure Hub menu\n");
   printf("\e[33m[HLP]\e[0m Manage and view hunts and their respective treasures with this interactive menu! Feel the thrill of a true hunter in the wild and explore managerial opportunities of your own making!\n");
-  printf("(Requires the binary \'treasure_manager\' file)\n");
+  printf("(Requires the \'treasure_manager.c\' file from Phase 1)\n");
   printf("\n");
   printf("\e[33m[HLP]\e[0m Available commands:\n");
   printf("\n");
@@ -216,7 +257,7 @@ void hchld_fin(int signum) {
   usleep(3000000); // wait 3 seconds
   
   // resolve stuff in the child before kill
-  printf("hchld_fin\n");
+  //printf("hchld_fin\n");
   exit(0);
 }
 
@@ -234,6 +275,10 @@ void hchld_usr1(int signum) {
   char binfile_path[MAX_PTH_LEN];
   snprintf(binfile_path, MAX_PTH_LEN, "%s/%s", _ALLFILE_PATH, _BINFILE_NAME);
 
+  for(int i = 0; i < 5; i++) {
+    args[i] = NULL;
+  }
+  
   // set the first argument (i.e. the program name)
   if((args[0] = malloc(sizeof(char) * MAX_PTH_LEN)) == NULL) {
     perror("Error making space for arguments in child");
@@ -242,17 +287,16 @@ void hchld_usr1(int signum) {
 
   strcpy(args[0], binfile_path);
   //printf("%s\n", args[0]); // -- debug
-
+  
   // get rest of arguments
-  int actual_it = 0;
   for(int it = 1; it <= 3; it++) {
-    actual_it = it;
     curr_arg[0] = '\0';
     // get argument from file
     if(!fgets(curr_arg, MAX_LIN_LEN, comm_file)) {
       break;
     }
-    printf(":: %s\n", curr_arg); // -- debug
+    //printf(":: %s\n", curr_arg); // -- debug
+    
     // format argument and flush rest of line
     if(curr_arg[strlen(curr_arg) - 1] == '\n') {
       curr_arg[strlen(curr_arg) - 1] = '\0';
@@ -270,13 +314,10 @@ void hchld_usr1(int signum) {
     strcpy(args[it], curr_arg);
   }
 
-  // set NULL as last item
-  args[actual_it] = NULL;
-
   // -- debug -- vv --
-  for(int i = 0; i <= actual_it; i++) {
-    printf(": %s\n", args[i]);
-  }
+  //for(int i = 0; i < 5; i++) {
+  //  printf(": %s\n", args[i]);
+  //}
   // -- debug -- ^^ --  
 
   // start a new child process for the manager
@@ -313,10 +354,6 @@ void hchld_usr1(int signum) {
     perror("Failed to notify parent operation is done");
     exit(errno);
   }
-
-  // TO DO: add a switch statement that checks which option was given
-  //        (read args from the file, if its the case), then fork and
-  //        call exec() on that child to execute the required option
 }
 
 // handler for when child finished an operation
@@ -399,6 +436,7 @@ int main(int argc, char** argv) {
     // 31 - red, 32 - green, 34 - blue
     // `\e[xxm` -> xx = number above
     printf("\e[32mtreaure_hub\e[0m>> ");
+    fflush(stdout);
 
     // take command input from user
     char cmd[MAX_CMD_LEN + 1];
@@ -504,7 +542,32 @@ int main(int argc, char** argv) {
       //printf("ID of parent %d, ID of child %d\n", getpid(), monitor_pid); // -- debug
       break;
     case LIST_T:
-      list_treasures();
+      // check if any monitor is open
+      if(monitor_pid < 0) {
+	printf("\e[35m[HUB]\e[0m No monitor is open at this time. Maybe open one?\n");
+	break;
+      }
+
+      // read additional data for the option (huntID)
+      char read_line[MAX_LIN_LEN];
+      printf("\e[35m[HUB]\e[0m Hunt id: ");
+      fflush(stdout);
+
+      fgets(read_line, MAX_LIN_LEN, stdin);
+
+      // format and flush the rest of stdin
+      if(read_line[strlen(read_line) - 1] == '\n') {
+	read_line[strlen(read_line) - 1] = '\0';
+      }
+      else {
+	while(fgetc(stdin) != '\n') {}
+      }
+
+      // take only the first token (separator is white space)
+      char* hunt_id = strtok(read_line, " ");
+      //printf(": %s:\n", aux); // -- debug
+      
+      list_treasures(hunt_id);
       break;
     case LIST_H:
       // check if any monitor is open
@@ -512,11 +575,53 @@ int main(int argc, char** argv) {
 	printf("\e[35m[HUB]\e[0m No monitor is open at this time. Maybe open one?\n");
 	break;
       }
-      
+
       list_hunts();
       break;
     case VIEW:
-      view_treasure();
+      // check if any monitor is open
+      if(monitor_pid < 0) {
+	printf("\e[35m[HUB]\e[0m No monitor is open at this time. Maybe open one?\n");
+	break;
+      }
+
+      // read additional data for the option (huntID)
+      //char read_line[MAX_LIN_LEN];
+      char read_line2[MAX_LIN_LEN];
+      printf("\e[35m[HUB]\e[0m Hunt id: ");
+      fflush(stdout);
+
+      fgets(read_line2, MAX_LIN_LEN, stdin);
+
+      // format and flush the rest of stdin
+      if(read_line2[strlen(read_line2) - 1] == '\n') {
+	read_line2[strlen(read_line2) - 1] = '\0';
+      }
+      else {
+	while(fgetc(stdin) != '\n') {}
+      }
+
+      // take only the first token (separator is white space)
+      char* hunt_id2 = strtok(read_line2, " ");
+
+      char read_line3[MAX_LIN_LEN];
+      printf("\e[35m[HUB]\e[0m Treasure id: ");
+      fflush(stdout);
+
+      fgets(read_line3, MAX_LIN_LEN, stdin);
+
+      // format and flush the rest of stdin
+      if(read_line3[strlen(read_line3) - 1] == '\n') {
+	read_line3[strlen(read_line3) - 1] = '\0';
+      }
+      else {
+	while(fgetc(stdin) != '\n') {}
+      }
+
+      // take only the first token (separator is white space)
+      char* trj_id2 = strtok(read_line3, " ");
+      
+      view_treasure(hunt_id2, trj_id2);
       break;
     case STOP:
       // check if any monitor is open
