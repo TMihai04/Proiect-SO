@@ -4,6 +4,9 @@
   -- PHASE 2 --
   holds the logic for managing processes, and calls functionalities from the other main file
 
+  -- PHASE 3 --
+  reroute all the outputs from stdout to the parent process through a pipe, such that printing to the screen is done exclusively from the parent process
+
   Project done by Mihai Toderasc - 2025
  */
 
@@ -17,6 +20,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <stddef.h>
+#include <fcntl.h>
 
 #define _SRCFILE_NAME "treasure_manager.c"
 #define _BINFILE_NAME "treasure_manager"
@@ -26,6 +30,7 @@
 #define MAX_CMD_LEN 32
 #define MAX_PTH_LEN 64
 #define MAX_LIN_LEN 64
+#define PIPERD_LEN  64
 
 #define _LIST_H "--listh"
 #define _LIST_T "--list"
@@ -51,6 +56,8 @@ struct command_t {
 
 // global variables
 pid_t monitor_pid = -1; // holds the pid for the child process
+int pipe_fd[2]; // holds the pipe file descriptors when and if one opens
+int read_pipe = 0; // tells the current process wether to read from the pipe
 
 // function that prints the usage
 void print_usage(char* cmd) {
@@ -66,7 +73,7 @@ void print_usage(char* cmd) {
   printf("\t--help           print this help and exit\n");
   printf("\n");
   printf("Exit status:\n");
-  printf(" 0  if OK,\n");
+  printf("\tProcess exits with status code 0 if no errors were encountered during the execution, or with the specific errno value set by the encountered error.\n");
 }
 
 // function that prints the menu header when starting the program
@@ -101,6 +108,52 @@ pid_t get_child_process() {
   return ret;
 }
 
+// function that reads from the pipe and displays stdout in the parent process
+void pipe_to_stdout() {
+  char frompipe[PIPERD_LEN];
+  int readsmth = 0;
+
+  while(read_pipe) {
+    // clear read buffer so it doesn't contain garbo data
+    memset(frompipe, 0, PIPERD_LEN);
+    
+    // attempt to read from pipe
+    int nread = read(pipe_fd[0], frompipe, PIPERD_LEN * sizeof(char));
+
+    // do stuff depending on what status code we got from reading
+    switch(nread) {
+    case -1:
+      // if nothing is in the buffer skip iteration
+      if(errno == EAGAIN) {
+	if(readsmth) {
+	  read_pipe = 0;
+	}
+	break;
+      }
+      else {
+	perror("Reading from pipe failed");
+	exit(errno);
+      }
+    case 0:
+      // if writing end of pipe closed (???)
+      // NOTE: the pipe's writing end can close only when all the children die
+      //       (i.e. the monitor dies unexpectedly), so i don't know if we need to
+      //       do something here, since an error is thrown somewhere else in the code
+      //       (i hope anyway)
+      printf("Idk how the pipe closed but sure");
+      read_pipe = 0;
+      break;
+    default:
+      // if pipe has data, display it to the screen (stdout)
+      printf("%s", frompipe);
+      fflush(stdout);
+
+      readsmth = 1;
+      break;
+    }
+  }
+}
+
 // function that signals the monitor to list treasures
 void list_treasures(char* arg1) {
   //printf("treasure list\n"); // -- debug
@@ -124,6 +177,10 @@ void list_treasures(char* arg1) {
 
   // wait for response from child
   pause();
+
+  // read from the pipe
+  read_pipe = 1;
+  pipe_to_stdout();
 }
 
 // function that signals the monitor to list hunts
@@ -148,6 +205,10 @@ void list_hunts() {
 
   // wait for response from child
   pause();
+
+  // read from the pipe
+  read_pipe = 1;
+  pipe_to_stdout();
 }
 
 // function that signals the monitor to view a certain treasure
@@ -174,6 +235,10 @@ void view_treasure(char* arg1, char* arg2) {
 
   // wait for response from child
   pause();
+
+  // read from the pipe
+  read_pipe = 1;
+  pipe_to_stdout();
 }
 
 // function that signals the monitor to stop
@@ -183,7 +248,9 @@ void stop_monitor() {
 
 // function that exits the program if the monitor is not running, else throws an error
 void exit_program() {
-  printf("program exited\n");
+  //printf("program exited\n"); // -- debug
+  // close the reading end of the pipe
+  close(pipe_fd[0]);
 }
 
 // function that prints command usage
@@ -326,6 +393,8 @@ void hchld_usr1(int signum) {
   // in the manager child, execute the manager with the arguments
   if(manager_pid == 0) {
     execv(binfile_path, args);
+    perror("Execv failed");
+    exit(errno);
   }
 
   // wait for child to exit
@@ -358,7 +427,17 @@ void hchld_usr1(int signum) {
 
 // handler for when child finished an operation
 void hchld_done(int signum) {
+  // read from the pipe and display the result to stdout
+  /*
+     TO DO: since we do not know how many bytes are written to the pipe,
+            either communicate that information at the start of the broadcast,
+	    or find a way to read from the pipe until all bytes are read
+   */   
+  
   printf("\e[32m[LOG]\e[0m Done.\n");
+
+  // tells the parent process to stop reading from the pipe
+  //read_pipe = 0;
 }
 
 int main(int argc, char** argv) {
@@ -385,9 +464,6 @@ int main(int argc, char** argv) {
 
     return 0;
   }
-
-  // check if the file used to communicate between processes exists
-  // if not, create it
 
   // check if the 'treasure_manager.c' file exists, and compile it
   // if not, let the user know program cannot run
@@ -425,8 +501,9 @@ int main(int argc, char** argv) {
   enum cmdcode_t curr_command_code = UNKWN; // command given in menu
   int is_menu_running = 1; // decides if the menu loop should run
   //pid_t parent_pid = getpid(); // holds the pid for the parent process
-  struct sigaction* sa = NULL;
-
+  struct sigaction* sa = NULL; // sigaction container variable
+  
+  // prints menu flavour text
   print_menu();
   
   while(is_menu_running) {
@@ -442,7 +519,7 @@ int main(int argc, char** argv) {
     char cmd[MAX_CMD_LEN + 1];
     if(!fgets(cmd, MAX_CMD_LEN + 1, stdin)) {
       perror("Error reading input");
-      exit(-1);
+      exit(errno);
     }
 
     // get rid of the rest of the buffer
@@ -453,7 +530,7 @@ int main(int argc, char** argv) {
       cmd[strlen(cmd) - 1] = '\0';
     }
 
-    // take only the first token of the command, separated by ' '
+    // take only the first token of the command, separated by white spaces
     strtok(cmd, " ");
     
     //printf("%s\n", cmd); // -- debug
@@ -484,12 +561,25 @@ int main(int argc, char** argv) {
 	break;
       }
 
+      // open a pipe for commnunication between processes
+      if(pipe(pipe_fd) < 0) {
+	perror("Error opening pipe");
+	exit(errno);
+      }
+
       // if not, open a new one
       printf("\e[34m[LOG]\e[0m Starting new monitor...\n");
       
       monitor_pid = get_child_process();
 
+      // parent process code snippet
       if(monitor_pid > 0) {
+	// close the writing end of the pipe
+	close(pipe_fd[1]);
+
+	// change the behaviour of the reading end of the pipe to be nonblocking
+	fcntl(pipe_fd[0], F_SETFL, O_NONBLOCK);
+	
 	// define sigaction
 	sa = calloc(1, sizeof(struct sigaction));
 	if(sa == NULL) {
@@ -536,6 +626,7 @@ int main(int argc, char** argv) {
       // in child, stop the menu loop
       if(monitor_pid == 0) {
 	is_menu_running = 0;
+	break;
       }
       
       //if(monitor_pid)
@@ -668,7 +759,7 @@ int main(int argc, char** argv) {
       }
       
       // exit parent process
-      //exit_program();
+      exit_program();
       is_menu_running = 0;
       break;
     case HELP:
@@ -682,11 +773,17 @@ int main(int argc, char** argv) {
 
   // code for the child (monitor) process
   if(monitor_pid == 0) {
-    // notify parent that child opened successfully
-    if(kill(getppid(), SIGUSR2) < 0) {
-      perror("Failed to notify the parent process");
-      exit(-2);
+    // close the reading end of the pipe
+    close(pipe_fd[0]);
+
+    // redirect stdout to the writing end of the pipe
+    if(dup2(pipe_fd[1], STDOUT_FILENO) < 0) {
+      perror("Error redirecting standard output to pipe");
+      exit(errno);
     }
+
+    // close writing end of pipe as it is not necessary anymore
+    close(pipe_fd[1]);
 
     // declare handler for termination
     struct sigaction sa_chld_term = { 0 };
@@ -699,6 +796,12 @@ int main(int argc, char** argv) {
 
     sa_chld_usr1.sa_handler = hchld_usr1;
     sigaction(SIGUSR1, &sa_chld_usr1, NULL);
+
+    // notify parent that child opened successfully
+    if(kill(getppid(), SIGUSR2) < 0) {
+      perror("Failed to notify the parent process");
+      exit(errno);
+    }
 
     /* NOTE : Since in the parent we ignore the SIGCHLD signals sent by the
               stopping or continuing of the child process, we are going to use
