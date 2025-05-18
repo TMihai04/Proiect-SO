@@ -143,7 +143,7 @@ void pipe_to_stdout() {
       //       (i.e. the monitor dies unexpectedly), so i don't know if we need to
       //       do something here, since an error is thrown somewhere else in the code
       //       (i hope anyway)
-      printf("Idk how the pipe closed but sure");
+      printf("Idk how the pipe closed but sure\n");
       read_pipe = 0;
       break;
     default:
@@ -253,7 +253,7 @@ void stop_monitor() {
 void exit_program() {
   //printf("program exited\n"); // -- debug
   // close the reading end of the pipe
-  close(pipe_fd[0]);
+  //close(pipe_fd[0]);
 }
 
 // function that prints command usage
@@ -297,9 +297,13 @@ void hchld_err(int signum) {
 // handler for child kill
 void hchld_kill(int signum) {
   // wait for child and grab status code
+  //printf(" c: %d\n", getpid()); // -- debug
   int wstatus;
   if(waitpid(monitor_pid, &wstatus, 0) < 0) {
-    perror("Error waiting for child");
+    char err[128];
+    snprintf(err, 128, "Error waiting for child, %d", getpid());
+    perror(err);
+    //perror("Error waiting for child");
     exit(errno);
   }
 
@@ -432,12 +436,6 @@ void hchld_usr1(int signum) {
 // handler for when child finished an operation
 void hchld_done(int signum) {
   // read from the pipe and display the result to stdout
-  /*
-     TO DO: since we do not know how many bytes are written to the pipe,
-            either communicate that information at the start of the broadcast,
-	    or find a way to read from the pipe until all bytes are read
-   */   
-  
   printf("\e[32m[LOG]\e[0m Done.\n");
 
   // tells the parent process to stop reading from the pipe
@@ -574,6 +572,7 @@ int main(int argc, char** argv) {
 
     // 31 - red, 32 - green, 34 - blue
     // `\e[xxm` -> xx = number above
+    //printf(" : %d\n", getpid()); // -- debug
     printf("\e[32mtreaure_hub\e[0m>> ");
     fflush(stdout);
 
@@ -806,6 +805,9 @@ int main(int argc, char** argv) {
 
       printf("\e[34m[LOG]\e[0m Ending child...\n");
 
+      // close reading end of pipe in parent
+      close(pipe_fd[0]);
+      
       // define sigaction
       sa = calloc(1, sizeof(struct sigaction));
       if(sa == NULL) {
@@ -885,6 +887,12 @@ int main(int argc, char** argv) {
 
     sa_chld_usr2.sa_handler = hchld_usr2;
     sigaction(SIGUSR2, &sa_chld_usr2, NULL);
+
+    // declare handler for child termination
+    struct sigaction sa_chld_cld = { 0 };
+
+    sa_chld_cld.sa_handler = SIG_DFL;
+    sigaction(SIGCHLD, &sa_chld_cld, NULL);
 
     // notify parent that child opened successfully
     if(kill(getppid(), SIGUSR2) < 0) {
