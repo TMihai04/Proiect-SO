@@ -22,10 +22,12 @@
 #include <stddef.h>
 #include <fcntl.h>
 
-#define _SRCFILE_NAME "treasure_manager.c"
-#define _BINFILE_NAME "treasure_manager"
-#define _COMFILE_NAME "commands.cms"
-#define _ALLFILE_PATH "."
+#define _SRCFILE_NAME  "treasure_manager.c"
+#define _BINFILE_NAME  "treasure_manager"
+#define _SRCFILE2_NAME "calculate_score.c"
+#define _BINFILE2_NAME "calculate_score"
+#define _COMFILE_NAME  "commands.cms"
+#define _ALLFILE_PATH  "."
 
 #define MAX_CMD_LEN 32
 #define MAX_PTH_LEN 64
@@ -43,6 +45,7 @@ enum cmdcode_t {
   LIST_H,
   LIST_T,
   VIEW,
+  CALC,
   STOP,
   EXIT,
   HELP,
@@ -61,9 +64,9 @@ int read_pipe = 0; // tells the current process wether to read from the pipe
 
 // function that prints the usage
 void print_usage(char* cmd) {
-  printf("Usage: %s\n", cmd);
+  printf("Usage: %s [OPTION]...\n", cmd);
   printf("Create separate processes and call on them to manage hunts and auxiliary data.\n");
-  printf("Requires the \'treasure_manager.c\' script to be located in the same directory as the calling script.\n");
+  printf("Requires the \'treasure_manager.c\' and \'calculate_score.c\' scripts to be located in the same directory as the calling script.\n");
   // NOTE: maybe add a way to specify the name and path of the binary.
   //       Check if the binary file exists in the specified (or default) path before
   //       launching a background process calling the script
@@ -257,7 +260,7 @@ void exit_program() {
 void print_usage_cmd() {
   printf("\e[32m[HLP]\e[0m This is a help prompt for the Treasure Hub menu\n");
   printf("\e[33m[HLP]\e[0m Manage and view hunts and their respective treasures with this interactive menu! Feel the thrill of a true hunter in the wild and explore managerial opportunities of your own making!\n");
-  printf("(Requires the \'treasure_manager.c\' file from Phase 1)\n");
+  printf("(Requires the \'treasure_manager.c\' file from Phase 1 and \'calculate_score.c\' file from Phase 3)\n");
   printf("\n");
   printf("\e[33m[HLP]\e[0m Available commands:\n");
   printf("\n");
@@ -266,6 +269,7 @@ void print_usage_cmd() {
   printf("[CMD]\tlist_hunts\n");
   printf("[CMD]\tlist_treasures\n");
   printf("[CMD]\tview_treasure\n");
+  printf("[CMD]\tcalculate_score\n");
   printf("[CMD]\texit\n");
   printf("[CMD]\thelp\n");
 }
@@ -440,6 +444,48 @@ void hchld_done(int signum) {
   //read_pipe = 0;
 }
 
+// handler in the child that executes the score calculation
+void hchld_usr2(int signum) {
+  // create a new child process and calculate scores
+  char binfile_path[MAX_PTH_LEN];
+  snprintf(binfile_path, MAX_PTH_LEN, "%s/%s", _ALLFILE_PATH, _BINFILE2_NAME);
+
+  pid_t calc_pid = get_child_process();
+
+  // in the manager child, execute the manager with the arguments
+  if(calc_pid == 0) {
+    execl(binfile_path, binfile_path, NULL);
+    perror("Execv failed");
+    exit(errno);
+  }
+
+  // wait for child to exit
+  int wstatus = 0;
+  waitpid(calc_pid, &wstatus, 0);
+
+  // check if child finished with exit() or return in main()
+  if(WIFEXITED(wstatus)) {
+    // check if child finished with exit code 0 (success)
+    int westatus = WEXITSTATUS(wstatus);
+    
+    if(westatus == 0) {
+      printf("\e[34m[LOG]\e[0m Success. Child finished (Code %d)\n", westatus);
+    }
+    else {
+      printf("\e[31m[ERR]\e[0m Error. Child process ended unexpectedly with code %d\n", westatus);
+    }
+  }
+  else {
+    printf("\e[31m[ERR]\e[0m Error. Child process ended unexpectedly and badly\n");
+  }
+  
+  // notify parent we are done with this operation
+  if(kill(getppid(), SIGUSR1) < 0) {
+    perror("Failed to notify parent operation is done");
+    exit(errno);
+  }
+}
+
 int main(int argc, char** argv) {
   // check if any options were given
   // NOTE: for the time being we will only accept the --help option
@@ -465,7 +511,8 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  // check if the 'treasure_manager.c' file exists, and compile it
+  // check if the 'treasure_manager.c' and 'claculate_score.c' files exists,
+  // and compile them
   // if not, let the user know program cannot run
   struct stat st = { 0 };
   if(stat(_SRCFILE_NAME, &st) < 0) {
@@ -473,7 +520,12 @@ int main(int argc, char** argv) {
     exit(errno);
   }
 
-  // compile the necessary program so we have the binary for it
+  if(stat(_SRCFILE2_NAME, &st) < 0) {
+    perror("Necessary prerequisite file non existent");
+    exit(errno);
+  }
+
+  // compile the necessary programs so we have the binary for it
   // NOTE: i am taking the liberty to use system() here, since we dive deeper
   //       into child processes later
   int compile_cmd_size = strlen("gcc ") + strlen(_SRCFILE_NAME) + strlen(" -o ") + strlen(_BINFILE_NAME) + 1;
@@ -486,12 +538,22 @@ int main(int argc, char** argv) {
     exit(errno);
   }
 
+  compile_cmd_size = strlen("gcc ") + strlen(_SRCFILE2_NAME) + strlen(" -o ") + strlen(_BINFILE2_NAME) + 1;
+
+  snprintf(compile_cmd, compile_cmd_size, "gcc %s -o %s", _SRCFILE2_NAME, _BINFILE2_NAME);
+  
+  if(system(compile_cmd) != 0) {
+    perror("Error compiling prerequisite file");
+    exit(errno);
+  }
+
   // code for when no options were given
   const static struct command_t COMMANDS[] = {
     {"start_monitor", START},
     {"list_hunts", LIST_H},
     {"list_treasures", LIST_T},
     {"view_treasure", VIEW},
+    {"calculate_score", CALC},
     {"stop_monitor", STOP},
     {"exit", EXIT},
     {"help", HELP}
@@ -714,6 +776,27 @@ int main(int argc, char** argv) {
       
       view_treasure(hunt_id2, trj_id2);
       break;
+    case CALC:
+      // check if any monitor is open
+      if(monitor_pid < 0) {
+	printf("\e[35m[HUB]\e[0m No monitor is open at this time. Maybe open one?\n");
+	break;
+      }
+      
+      // create a new child process and calculate scores
+      if(kill(monitor_pid, SIGUSR2) < 0) {
+	perror("Failed to notify monitor");
+	exit(errno);
+      }
+
+      // wait for response from child
+      pause();
+
+      // read from the pipe
+      read_pipe = 1;
+      pipe_to_stdout();
+      
+      break;
     case STOP:
       // check if any monitor is open
       if(monitor_pid < 0) {
@@ -796,6 +879,12 @@ int main(int argc, char** argv) {
 
     sa_chld_usr1.sa_handler = hchld_usr1;
     sigaction(SIGUSR1, &sa_chld_usr1, NULL);
+
+    // declare handler for calculation execution
+    struct sigaction sa_chld_usr2 = { 0 };
+
+    sa_chld_usr2.sa_handler = hchld_usr2;
+    sigaction(SIGUSR2, &sa_chld_usr2, NULL);
 
     // notify parent that child opened successfully
     if(kill(getppid(), SIGUSR2) < 0) {

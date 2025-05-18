@@ -80,9 +80,9 @@ struct header_t {
 struct trj_data_t {
   //char trj_id[MAX_TRJID_LEN];
   uint8_t id;
-  char usr_id[MAX_USRID_LEN];
+  char usr_id[MAX_USRID_LEN]; // 32
   float lati, longi;
-  char desc[MAX_TRJDESC_LEN];
+  char desc[MAX_TRJDESC_LEN]; // 64
   int val;
 };
 
@@ -848,11 +848,11 @@ void list_hunts() {
       hunt_cnt++;
       printf("Read hunt \'%s\' ", curr_entry->d_name);
 
-      if(!has_log){
+      if(!has_log) {
 	printf("(Logs missing) - %d treasure(s)\n", trj_cnt);
       }
       else if(!has_trj) {
-	printf("(treasures missing)\n");
+	printf("(Treasures missing)\n");
       }
       else {
 	printf("- %d treasure(s)\n", trj_cnt);
